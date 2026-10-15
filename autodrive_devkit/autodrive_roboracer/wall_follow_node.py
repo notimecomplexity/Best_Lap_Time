@@ -10,6 +10,8 @@ from std_msgs.msg import Float32
 import math
 import statistics
 
+cos_45 = math.sqrt(2) / 2
+
 class WallFollowNode(Node):
     def __init__(self): # Handles Topics
         super().__init__('wall_follow_node')
@@ -35,6 +37,10 @@ class WallFollowNode(Node):
         )
 
         self.straight_count = 0
+        self.prev_error = None
+        self.prev_time = None
+        self.kd = 0.05
+        self.prev_mode = None
     
     def publish_commands(self, throttle, steering): # Publishes to Steering, Throttle Topics
         if not math.isfinite(throttle) or not math.isfinite(steering):
@@ -94,14 +100,14 @@ class WallFollowNode(Node):
 
         # Angle & Distance of left / right walls relative to car
         if lvalid:
-            a_proj = a_dist * math.sqrt(2) / 2
+            a_proj = a_dist * cos_45
             lwall_rad = math.atan2(
                 a_proj - b_dist,
                 a_proj,
             )
             lwall_dist = b_dist * math.cos(lwall_rad)
         if rvalid:
-            c_proj = c_dist * math.sqrt(2) / 2
+            c_proj = c_dist * cos_45
             rwall_rad = math.atan2(
                 c_proj - d_dist,
                 c_proj,
@@ -154,19 +160,47 @@ class WallFollowNode(Node):
         rwall_pred = rwall_dist + L * math.sin(rwall_rad)
 
         # Calculates steering given prior calculations
+        # Calculate error
         if lvalid and rvalid:
-            steering = kp * ((lwall_pred - lideal) - (rwall_pred - rideal))
+            error = (lwall_pred - lideal) - (rwall_pred - rideal)
+
         elif lvalid:
-            steering = kp * (lwall_pred - lideal)
+            error = lwall_pred - lideal
+
         elif rvalid:
-            steering = kp * (rideal - rwall_pred)
+            error = rideal - rwall_pred
+
         else:
             self.straight_count = 0
-            self.publish_commands(0.0, 0.0) # error occured
+            self.prev_error = None
+            self.prev_time = None
+            self.publish_commands(0.0, 0.0)
             return
 
+
+        # Calculate elapsed time
+        # After calculating error; the no-wall branch already returned.
+        mode = (lvalid, rvalid)
+        current_time = self.get_clock().now()
+        derivative = 0.0
+
+        if (
+            mode == self.prev_mode
+            and self.prev_time is not None
+            and self.prev_error is not None
+        ):
+            dt = (current_time - self.prev_time).nanoseconds / 1e9
+            if dt > 0:
+                derivative = (error - self.prev_error) / dt
+
+        steering = kp * error + self.kd * derivative
+
+        self.prev_error = error
+        self.prev_time = current_time
+        self.prev_mode = mode
+
         # Calculates throttle given steering strength
-        throttle_max = 0.145
+        throttle_max = 0.17
         throttle_min = 0.12
         turn_fraction = min(abs(steering) / 0.5, 1.0)
         throttle = (
@@ -191,13 +225,11 @@ class WallFollowNode(Node):
             self.straight_count = 0
         is_straight = self.straight_count >= 5
         straight_boost = 1.0
-        if is_straight:
-            throttle = straight_boost
 
         slow_start = 5.0
         slow_full = 1.0
-        far_throttle = 0.20
-        near_throttle = 0.10
+        far_throttle = 0.50
+        near_throttle = 0.40
 
         proximity = max(
             0.0,
@@ -210,6 +242,13 @@ class WallFollowNode(Node):
         )
 
         throttle = min(throttle, front_throttle_cap)
+
+        if is_straight:
+            throttle = straight_boost
+
+        # self.get_logger().info(
+        #     f"Throttle: {throttle:.3f} | Steering: {steering:.3f}"
+        # )
 
         # Publishes to Throttle, Steering Topics
         self.publish_commands(throttle, steering)
