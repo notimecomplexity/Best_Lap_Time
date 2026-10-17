@@ -13,5 +13,7 @@
   </a>
 </figure>
 
+*(click on the image to open the YouTube link)*
+
 ## Fastest Lap Time
 **7.9 s**
