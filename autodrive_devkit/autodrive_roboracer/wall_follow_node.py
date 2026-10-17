@@ -264,23 +264,27 @@ class WallFollowNode(Node):
         is_straight = self.boost_active
         straight_boost = 1.0
 
-        slow_start = 5.0
+        slow_start = 3.0
         slow_full = 1.0
-        far_throttle = 0.50
-        near_throttle = 0.40
+        far_throttle = 0.17
+        near_throttle = 0.15
 
-        proximity = max(
-            0.0,
-            min(1.0, (slow_start - f_dist) / (slow_start - slow_full)),
-        )
+        # Apply the clearance cap last, only below 3 meters.
+        if f_dist < slow_start:
+            proximity = max(
+                0.0,
+                min(
+                    1.0,
+                    (slow_start - f_dist) / (slow_start - slow_full),
+                ),
+            )
 
-        front_throttle_cap = (
-            far_throttle
-            - proximity * (far_throttle - near_throttle)
-        )
+            front_throttle_cap = (
+                far_throttle
+                - proximity * (far_throttle - near_throttle)
+            )
 
-        throttle = min(throttle, front_throttle_cap)
-
+            throttle = min(throttle, front_throttle_cap)
 
         if is_straight:
             throttle = straight_boost
